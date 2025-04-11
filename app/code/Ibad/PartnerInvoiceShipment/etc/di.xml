@@ -7,4 +7,7 @@
 			</argument>
 		</arguments>
 	</virtualType>
+	<type name="Magento\Sales\Model\ResourceModel\Order\Grid\Collection">
+		<plugin name="add_partner_to_order_grid" type="Ibad\PartnerInvoiceShipment\Plugin\OrderGridCollectionPlugin" />
+	</type>
 </config>

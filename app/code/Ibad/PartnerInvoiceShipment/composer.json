@@ -1,0 +1,22 @@
+{
+    "name": "ibad/module-partnerinvoiceshipment",
+    "description": "Create Shipment/Invoice on the basis of partner",
+    "type": "magento2-module",
+    "license": "proprietary",
+    "authors": [
+        {
+            "name": "Ibad ur Rehman",
+            "email": "irehman@folio3.com"
+        }
+    ],
+    "minimum-stability": "dev",
+    "require": {},
+    "autoload": {
+        "files": [
+            "registration.php"
+        ],
+        "psr-4": {
+            "Ibad\\PartnerInvoiceShipment\\": ""
+        }
+    }
+}

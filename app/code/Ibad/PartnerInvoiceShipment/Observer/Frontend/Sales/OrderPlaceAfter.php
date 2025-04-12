@@ -8,12 +8,8 @@ use Magento\Framework\Event\Observer;
 use Magento\Framework\Event\ObserverInterface;
 use Psr\Log\LoggerInterface;
 use  Magento\Sales\Model\Order\ShipmentFactory;
-use Magento\Sales\Model\Service\ShipmentService;
 use Magento\Sales\Model\Service\InvoiceService;
 use Magento\Sales\Model\Order\Shipment\ItemFactory;
-use Magento\Sales\Api\ShipmentRepositoryInterface;
-use Magento\Framework\DB\Transaction;
-use Magento\Sales\Model\Convert\Order;
 use Magento\Framework\DB\TransactionFactory;
 
 
@@ -28,7 +24,7 @@ class OrderPlaceAfter implements ObserverInterface
      */
     protected $shipmentFactory;
     /**
-     * @var
+     * @var InvoiceService
      */
     protected $invoiceService;
 
@@ -38,24 +34,14 @@ class OrderPlaceAfter implements ObserverInterface
     protected $shipmentItemFactory;
 
     /**
-     * @var ShipmentRepository
-     */
-    protected $shipmentRepository;
-
-    /**
      * @var TransactionFactory
      */
     protected $transaction;
-
-    protected $convertOrder;
 
     /**
      * @param LoggerInterface $logger
      * @param ShipmentFactory $shipmentFactory
      * @param ItemFactory $shipmentItemFactory
-     * @param ShipmentRepositoryInterface $shipmentRepository
-     * @param Transaction $transaction
-     * @param Order $convertOrder
      * @param InvoiceService $invoiceService
      * @param TransactionFactory $transactionFactory
      */
@@ -63,9 +49,6 @@ class OrderPlaceAfter implements ObserverInterface
         LoggerInterface             $logger,
         ShipmentFactory             $shipmentFactory,
         ItemFactory                 $shipmentItemFactory,
-        ShipmentRepositoryInterface $shipmentRepository,
-        Transaction                 $transaction,
-        Order                       $convertOrder,
         InvoiceService              $invoiceService,
         TransactionFactory          $transactionFactory
     )
@@ -73,9 +56,7 @@ class OrderPlaceAfter implements ObserverInterface
         $this->logger = $logger;
         $this->shipmentFactory = $shipmentFactory;
         $this->shipmentItemFactory = $shipmentItemFactory;
-        $this->shipmentRepository = $shipmentRepository;
         $this->transaction = $transactionFactory;
-        $this->convertOrder = $convertOrder;
         $this->invoiceService = $invoiceService;
     }
 
@@ -89,64 +70,29 @@ class OrderPlaceAfter implements ObserverInterface
     {
         $order = $observer->getEvent()->getOrder();
         if (isset($_COOKIE['partner'])) {
-
             //set parter name in order
             $this->setPartnerName($_COOKIE['partner'], $order);
 
-            // Get all visible items from the order
             $items = $order->getAllVisibleItems();
             $itemCount = count($items);
-            $numShipments = ($itemCount > 1) ? 2 : 1;
-            $chunks = array_chunk($items, (int)ceil($itemCount / $numShipments));
+            $splitItems = $this->splitItems($itemCount,$items);
 
-            $this->logger->debug('Chunkssss ' . print_r($chunks, true));
+            foreach ($splitItems as $splitItem) {
 
-            foreach ($chunks as $chunk) {
-                $this->logger->debug('Chunk ' . print_r($chunk, true));
-                $shipment = $this->shipmentFactory->create($order);
-                foreach ($chunk as $item) {
-
-                    $this->logger->debug('Shipment Qty To Ship: ' . $item->getQtyToShip());
-                    $this->logger->debug('Shipment Item: ' . $item->getQtyOrdered());
-
-                    $qtyShipped = $item->getQtyToShip();
-                    if ($qtyShipped > 0 && !$item->getIsVirtual()) {
-                        $shipmentItem = $this->shipmentItemFactory->create();
-                        $shipmentItem->setOrderItem($item);
-                        $shipmentItem->setQty($qtyShipped);
-                        $shipment->addItem($shipmentItem);
-                    }
-                }
-
-                $this->logger->debug('Shipment Data: ' . print_r($shipment->debug(), true));
+                $shipment = $this->createSplitShipment($order,$splitItem);
                 $shipment->register();
                 $shipment->getOrder()->setIsInProcess(true);
 
                 // Create Invoice
-
-                $invoiceItems = [];
-                foreach ($chunk as $item) {
-                    $this->logger->debug('Item Id '.$item->getId());
-                    $this->logger->debug('Item Qty Invoice '.$item->getQtyToInvoice());
-
-                    $invoiceItems[$item->getId()] = $item->getQtyToInvoice();
-                }
-
+                $invoiceItems = $this->createSplitInvoice($splitItem);
                 $invoice = $this->invoiceService->prepareInvoice($order, $invoiceItems);
                 $invoice->register();
                 $invoice->getOrder()->setIsInProcess(true);
 
-
                 try {
-                    $transactionSave = $this->transaction->create()
-                        ->addObject($shipment)
-                        ->addObject($invoice)
-                        ->addObject($shipment->getOrder());
-
-                    $transactionSave->save();
-
-
-                    $this->logger->debug('Shipment created');
+                    // save transaction
+                    $this->saveTransaction($shipment, $invoice);
+                    $this->logger->debug('Shipment created successfully');
                 } catch (Exception $e) {
                     $this->logger->error('Shipment creation failed: ' . $e->getMessage());
                 }
@@ -166,5 +112,73 @@ class OrderPlaceAfter implements ObserverInterface
             $this->logger->debug('Set Partner: ' . $_COOKIE['partner']);
         }
     }
-}
 
+    /**
+     * @param $order
+     * @param $chunk
+     * @return \Magento\Sales\Api\Data\ShipmentInterface
+     * @throws \Magento\Framework\Exception\LocalizedException
+     */
+    private function createSplitShipment($order,$chunk)
+    {
+        $shipment = $this->shipmentFactory->create($order);
+        foreach ($chunk as $item) {
+            $qtyToShip = $item->getQtyToShip();
+            if ($qtyToShip > 0 && !$item->getIsVirtual()) {
+                $shipmentItem = $this->shipmentItemFactory->create();
+                $shipmentItem->setOrderItem($item);
+                $shipmentItem->setQty($qtyToShip);
+                $shipment->addItem($shipmentItem);
+            }
+        }
+        return $shipment;
+    }
+
+    /**
+     * @param $chunk
+     * @return array
+     */
+    private function createSplitInvoice($chunk)
+    {
+        $invoiceItems = [];
+        foreach ($chunk as $item) {
+            $qtyToInvoice = $item->getQtyToInvoice();
+            if ($qtyToInvoice > 0) {
+                $invoiceItems[$item->getId()] = $qtyToInvoice;
+            }
+        }
+        return $invoiceItems;
+    }
+
+    /**
+     * @param $shipment
+     * @param $invoice
+     * @return void
+     */
+    private function saveTransaction($shipment, $invoice)
+    {
+        if($shipment && $invoice){
+            $transaction = $this->transaction->create()
+                ->addObject($shipment)
+                ->addObject($invoice)
+                ->addObject($shipment->getOrder());
+            $transaction->save();
+        }
+    }
+
+    /**
+     * @param $itemCount
+     * @param $items
+     * @return array|string
+     */
+    private function splitItems($itemCount,$items)
+    {
+        $splitItems = "";
+        if(!empty($items)) {
+            $numGroups = $itemCount > 1 ? 2 : 1;
+            $splitItems = array_chunk($items, (int)ceil($itemCount / $numGroups));
+        }
+        return $splitItems;
+    }
+
+}

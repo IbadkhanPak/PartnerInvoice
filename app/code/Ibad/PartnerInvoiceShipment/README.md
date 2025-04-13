@@ -43,7 +43,7 @@ Create Shipment/Invoice on the basis of partner
 ## Specifications
 
  - Observer
-	- sales_order_place_after > Ibad\PartnerInvoiceShipment\Observer\Frontend\Sales\OrderPlaceAfter
+	- checkout_submit_all_after > Ibad\PartnerInvoiceShipment\Observer\Frontend\Sales\OrderPlaceAfter
 
 
 ## Attributes

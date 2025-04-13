@@ -11,6 +11,8 @@ use  Magento\Sales\Model\Order\ShipmentFactory;
 use Magento\Sales\Model\Service\InvoiceService;
 use Magento\Sales\Model\Order\Shipment\ItemFactory;
 use Magento\Framework\DB\TransactionFactory;
+use Magento\Framework\Stdlib\CookieManagerInterface;
+
 
 
 class OrderPlaceAfter implements ObserverInterface
@@ -39,18 +41,27 @@ class OrderPlaceAfter implements ObserverInterface
     protected $transaction;
 
     /**
+     * @var CookieManagerInterface
+     */
+    protected $cookieManager;
+
+
+    /**
      * @param LoggerInterface $logger
      * @param ShipmentFactory $shipmentFactory
      * @param ItemFactory $shipmentItemFactory
      * @param InvoiceService $invoiceService
      * @param TransactionFactory $transactionFactory
+     * @param CookieManagerInterface $cookieManager
      */
     public function __construct(
         LoggerInterface             $logger,
         ShipmentFactory             $shipmentFactory,
         ItemFactory                 $shipmentItemFactory,
         InvoiceService              $invoiceService,
-        TransactionFactory          $transactionFactory
+        TransactionFactory          $transactionFactory,
+        CookieManagerInterface      $cookieManager
+
     )
     {
         $this->logger = $logger;
@@ -58,6 +69,8 @@ class OrderPlaceAfter implements ObserverInterface
         $this->shipmentItemFactory = $shipmentItemFactory;
         $this->transaction = $transactionFactory;
         $this->invoiceService = $invoiceService;
+        $this->cookieManager = $cookieManager;
+
     }
 
     /**
@@ -69,9 +82,10 @@ class OrderPlaceAfter implements ObserverInterface
     public function execute(Observer $observer): void
     {
         $order = $observer->getEvent()->getOrder();
-        if (isset($_COOKIE['partner'])) {
+        $partnerName = $this->getPartnerCookie();
+        if (isset($partnerName)) {
             //set parter name in order
-            $this->setPartnerName($_COOKIE['partner'], $order);
+            $this->setPartnerName($partnerName, $order);
 
             $items = $order->getAllVisibleItems();
             $itemCount = count($items);
@@ -108,8 +122,8 @@ class OrderPlaceAfter implements ObserverInterface
     public function setPartnerName($partner, $order)
     {
         if (!empty($partner)) {
-            $order->setData('partner_name', $_COOKIE['partner']);
-            $this->logger->debug('Set Partner: ' . $_COOKIE['partner']);
+            $order->setData('partner_name', $partner);
+            $this->logger->debug('Set Partner: ' . $partner);
         }
     }
 
@@ -179,6 +193,14 @@ class OrderPlaceAfter implements ObserverInterface
             $splitItems = array_chunk($items, (int)ceil($itemCount / $numGroups));
         }
         return $splitItems;
+    }
+
+    /**
+     * @return string|null
+     */
+    public function getPartnerCookie()
+    {
+        return $this->cookieManager->getCookie('partner');
     }
 
 }
